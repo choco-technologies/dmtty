@@ -79,39 +79,21 @@ jobs:
           ls -la dmf/
           ls -la dmfc/
 
-      - name: Prepare release package
-        run: |
-          set -e
-          mkdir -p release_package
-          BUILD_DIR=build_$ARCH_DIR_NAME
-          DMF_DIR="$BUILD_DIR/dmf"
-          DMFC_DIR="$BUILD_DIR/dmfc"
-
-          cp $DMF_DIR/dmtty.dmf release_package/
-          cp $DMF_DIR/dmtty_version.txt release_package/
-          cp $DMFC_DIR/dmtty.dmfc release_package/
-          if [ -f $DMF_DIR/dmtty.dmd ]; then
-            cp $DMF_DIR/dmtty.dmd release_package/
-          fi
-
-          cp README.md release_package/
-          cp LICENSE release_package/
-          cp dmtty.dmr release_package/
-          cp -r include release_package/
-          cp -r examples release_package/
-          cp -r docs release_package/
-          cp $BUILD_DIR/dmtty_defs.h release_package/include/
-
-          echo "${{ github.event.release.body }}" > release_package/RELEASE_NOTES.txt
-
-          echo "Package contents:"
-          ls -la release_package/
-
       - name: Create release archive
         run: |
-          cd release_package
-          zip -r ../dmtty-${{ github.event.release.tag_name }}-$ARCH_DIR_NAME.zip .
-          cd ..
+          set -e
+          BUILD_DIR=build_$ARCH_DIR_NAME
+          ARCHIVE_NAME="dmtty-${{ github.event.release.tag_name }}-$ARCH_DIR_NAME.zip"
+
+          # Use the release package the build already produced from dmtty.dmr
+          # (via mkdmrpkg) instead of hand-picking files here - dmtty.dmr is
+          # the single source of truth for what goes into a release, so this
+          # step only adds the release notes on top of it.
+          cp "$BUILD_DIR/packages/dmtty.zip" "$ARCHIVE_NAME"
+
+          echo "${{ github.event.release.body }}" > RELEASE_NOTES.txt
+          zip -j "$ARCHIVE_NAME" RELEASE_NOTES.txt
+
           echo "Created archive:"
           ls -lh dmtty-*.zip
 
