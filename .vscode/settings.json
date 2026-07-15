@@ -1,0 +1,15 @@
+{
+    "files.associations": {
+        "dmod.h": "c",
+        "dmdrvi.h": "c",
+        "dmini.h": "c",
+        "dmhaman.h": "c",
+        "dmlist.h": "c",
+        "dmosi.h": "c",
+        "dmtty.h": "c",
+        "dmtty_types.h": "c"
+    },
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+    "C_Cpp.intelliSenseEngine": "default",
+    "C_Cpp.errorSquiggles": "enabled"
+}

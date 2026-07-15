@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop, 'feature/**', 'copilot/**' ]
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    container:
+      image: chocotechnologies/dmod:1.0.4
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build dmtty project
+        run: |
+          set -e
+          mkdir -p build
+          cd build
+          cmake .. -DDMOD_MODE=DMOD_MODULE
+          cmake --build .
+
+          echo "Build completed"
+          ls -lh dmf/
