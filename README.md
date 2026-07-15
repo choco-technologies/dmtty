@@ -104,6 +104,8 @@ dmtty/
 │   └── dmtty_types.h  # IO flags, ioctl commands, dmhaman event
 ├── src/
 │   └── dmtty.c        # Implementation
+├── tools/
+│   └── tty/           # CLI tool to manually attach a path via dmtty_attach()
 ├── CMakeLists.txt     # Build configuration
 └── manifest.dmm       # DMOD manifest
 ```

@@ -93,3 +93,10 @@ dmod_link_modules(${DMOD_MODULE_NAME}
 target_include_directories(${DMOD_MODULE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+# ======================================================================
+#               Tools
+# ======================================================================
+# Built together with dmtty itself, sharing this same dmod fetch/config
+# instead of setting up a second, separate DMOD project.
+add_subdirectory(tools/tty)

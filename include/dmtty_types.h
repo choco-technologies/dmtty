@@ -32,6 +32,15 @@ typedef enum
 
 /**
  * @brief IOCTL commands supported on dmtty device nodes
+ *
+ * dmtty_ioctl_cmd_claim_foreground / dmtty_ioctl_cmd_is_foreground relate to
+ * the foreground-reader concept: each device node tracks exactly one "foreground"
+ * open handle (the first one to open it, by default). Reads through any other,
+ * background, handle on the same node quietly block instead of racing the
+ * foreground handle for incoming bytes - the dmtty equivalent of POSIX
+ * SIGTTIN/job control, without an actual signal. Ownership is released when the
+ * foreground handle is closed, at which point the node is unclaimed again and
+ * the next handle to attempt a read (foreground or not) claims it.
  */
 typedef enum
 {
@@ -39,6 +48,8 @@ typedef enum
     dmtty_ioctl_cmd_set_flags,           /**< Set IO flags; arg = uint32_t* (dmtty_flags_t bitmask) */
     dmtty_ioctl_cmd_get_backing_path,    /**< Get backing file path; arg = char[DMTTY_MAX_PATH_LEN + 1] */
     dmtty_ioctl_cmd_set_backing_path,    /**< Re-point this node to another backing file; arg = const char* */
+    dmtty_ioctl_cmd_claim_foreground,    /**< Make the calling handle the foreground reader of this node; arg unused (pass NULL) */
+    dmtty_ioctl_cmd_is_foreground,       /**< Check foreground status; arg = bool* (true if the calling handle is currently foreground) */
 
     dmtty_ioctl_cmd_max
 } dmtty_ioctl_cmd_t;

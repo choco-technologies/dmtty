@@ -22,6 +22,15 @@
 #define DMTTY_LINE_BUFFER_SIZE  128
 
 /**
+ * @brief How long a background (non-foreground) reader sleeps between checks
+ *        of whether it has become the foreground handle
+ *
+ * Not a protocol constant, just a balance between wake-up latency and CPU use
+ * for a handle that is quietly waiting its turn at the terminal.
+ */
+#define DMTTY_FOREGROUND_POLL_MS 20
+
+/**
  * @brief A single exposed device node: a device number plus the backing
  *        file it forwards to/from and the line discipline applied to it
  */
@@ -31,6 +40,7 @@ typedef struct
     char            *backing_path;                      /**< Path forwarded to/from (NULL = unbound), owned by this slot */
     uint32_t         flags;                             /**< Current IO flags (dmtty_flags_t bitmask) */
     int              open_count;                        /**< Number of handles currently open on this slot */
+    void            *foreground_handle;                 /**< The dmtty_handle_t currently allowed to read from this slot, NULL if unclaimed (see DMTTY_FOREGROUND_POLL_MS) */
 } dmtty_slot_t;
 
 /**
@@ -62,6 +72,7 @@ typedef struct
     size_t        line_len;                       /**< Bytes currently assembled into line_buf */
     size_t        line_pos;                       /**< Read offset into a completed line */
     bool          have_line;                      /**< True once line_buf holds a complete line */
+    bool          skip_next_lf;                   /**< True right after a CR was turned into the line terminator, so a following bare LF (the rest of a CRLF pair) is swallowed instead of starting an empty line */
 } dmtty_handle_t;
 
 /**
@@ -584,6 +595,17 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, void*, _open, ( dmdrvi_context_t con
     handle->slot = slot;
     handle->backing_file = backing_file;
 
+    /* First handle to open an unclaimed node becomes its foreground reader
+     * (see DMTTY_FOREGROUND_POLL_MS / dmtty_ioctl_cmd_claim_foreground). A
+     * node re-opened while already claimed - e.g. a backgrounded job that
+     * inherited the same path as its stdin - does not steal foreground. */
+    dmosi_mutex_lock(context->lock);
+    if (slot->foreground_handle == NULL)
+    {
+        slot->foreground_handle = handle;
+    }
+    dmosi_mutex_unlock(context->lock);
+
     (void)flags;
     return handle;
 }
@@ -606,6 +628,12 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, void, _close, ( dmdrvi_context_t con
     {
         h->slot->open_count--;
     }
+    if (h->slot->foreground_handle == h)
+    {
+        /* Unclaim: the next handle to attempt a read (foreground or
+         * background) becomes the new foreground reader. */
+        h->slot->foreground_handle = NULL;
+    }
     dmosi_mutex_unlock(context->lock);
 
     Dmod_Free(handle);
@@ -620,7 +648,34 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, size_t, _read, ( dmdrvi_context_t co
     }
 
     dmtty_handle_t *h = (dmtty_handle_t *)handle;
-    uint32_t flags = h->slot->flags;
+    dmtty_slot_t *slot = h->slot;
+
+    /* Foreground arbitration: only the slot's foreground handle actually
+     * pulls bytes off the backing file. A background handle (e.g. a job
+     * started with `&` that inherited the same tty as its stdin) quietly
+     * waits its turn here instead of racing the foreground handle for
+     * incoming bytes - see DMTTY_FOREGROUND_POLL_MS. If the previous
+     * foreground handle has since closed (slot unclaimed), this handle
+     * claims it and proceeds immediately. */
+    for (;;)
+    {
+        bool is_foreground;
+        dmosi_mutex_lock(context->lock);
+        if (slot->foreground_handle == NULL)
+        {
+            slot->foreground_handle = h;
+        }
+        is_foreground = (slot->foreground_handle == h);
+        dmosi_mutex_unlock(context->lock);
+
+        if (is_foreground)
+        {
+            break;
+        }
+        dmosi_thread_sleep(DMTTY_FOREGROUND_POLL_MS);
+    }
+
+    uint32_t flags = slot->flags;
     bool echo = (flags & dmtty_flag_echo) != 0;
     bool canonical = (flags & dmtty_flag_canonical) != 0;
     uint8_t *out = (uint8_t *)buffer;
@@ -646,10 +701,37 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, size_t, _read, ( dmdrvi_context_t co
         {
             break; /* No more data available right now */
         }
+
+        /* Many serial terminals (e.g. minicom) send a bare CR ('\r') for
+         * the Enter key, not LF - and some send CRLF. Normalize CR to LF
+         * (like canonical-mode ICRNL) so Enter reliably terminates the
+         * line either way, and swallow the LF half of a CRLF pair so it
+         * doesn't start a spurious empty second line. */
+        if (byte == '\n' && h->skip_next_lf)
+        {
+            h->skip_next_lf = false;
+            continue;
+        }
+        h->skip_next_lf = false;
+
         if (echo)
         {
             Dmod_FileWrite(&byte, 1, 1, h->backing_file);
+            if (byte == '\r')
+            {
+                /* Echo the LF half too so the terminal actually advances
+                 * to a new line instead of just returning to column 0. */
+                uint8_t lf = '\n';
+                Dmod_FileWrite(&lf, 1, 1, h->backing_file);
+            }
         }
+
+        if (byte == '\r')
+        {
+            byte = '\n';
+            h->skip_next_lf = true;
+        }
+
         h->line_buf[h->line_len++] = (char)byte;
         if (byte == '\n' || h->line_len >= sizeof(h->line_buf))
         {
@@ -747,11 +829,25 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, int, _ioctl, ( dmdrvi_context_t cont
             h->line_len = 0;
             h->line_pos = 0;
             h->have_line = false;
+            h->skip_next_lf = false;
 
             Dmod_Free(slot->backing_path);
             slot->backing_path = new_backing_path;
             return 0;
         }
+
+        case dmtty_ioctl_cmd_claim_foreground:
+            dmosi_mutex_lock(context->lock);
+            slot->foreground_handle = h;
+            dmosi_mutex_unlock(context->lock);
+            return 0;
+
+        case dmtty_ioctl_cmd_is_foreground:
+            if (arg == NULL) return -EINVAL;
+            dmosi_mutex_lock(context->lock);
+            *(bool *)arg = (slot->foreground_handle == h);
+            dmosi_mutex_unlock(context->lock);
+            return 0;
 
         default:
             return -EINVAL;

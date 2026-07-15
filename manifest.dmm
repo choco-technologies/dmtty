@@ -3,3 +3,7 @@ $include https://github.com/choco-technologies/dmtty/releases/download/vlatest/v
 
 # Module entries with version placeholder - will be expanded by $version-available
 dmtty https://github.com/choco-technologies/dmtty/releases/download/v<version>/dmtty-v<version>-<arch_name>.zip
+
+# tty is a compiled Application module (tools/tty), so it is
+# architecture-dependent, just like dmtty itself
+tty https://github.com/choco-technologies/dmtty/releases/download/v<version>/tty-v<version>-<arch_name>.zip
