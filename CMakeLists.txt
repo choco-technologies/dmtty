@@ -35,18 +35,12 @@ set(DMOD_BUILD_EXAMPLES OFF CACHE BOOL "Build examples")
 set(DMOD_BUILD_TOOLS OFF CACHE BOOL "Build tools")
 set(DMOD_BUILD_TEMPLATES OFF CACHE BOOL "Build templates")
 
-# project() must be called BEFORE FetchContent_MakeAvailable(dmod) so that
-# CMake's compiler test runs here - before dmod's tools-cfg.cmake adds hundreds
-# of esp-idf include_directories() globally. If project() were called after,
-# the compiler test would be triggered inside dmod (at dmod's own project() call)
-# with the full esp-idf include list already in scope, causing
-# "Argument list too long" on systems with a small ARG_MAX (e.g. GitHub Actions).
+FetchContent_MakeAvailable(dmod)
+
 project(dmtty
     VERSION ${DMOD_MODULE_VERSION}
     DESCRIPTION "DMOD TTY Line Discipline Driver Module"
     LANGUAGES C CXX)
-
-FetchContent_MakeAvailable(dmod)
 
 # ======================================================================
 #               Import dmod functions and macros
