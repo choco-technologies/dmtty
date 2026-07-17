@@ -67,7 +67,7 @@ struct dmdrvi_context
 typedef struct
 {
     dmtty_slot_t *slot;                          /**< Slot this handle was opened from */
-    void         *backing_file;                  /**< Backing file, opened via Dmod_FileOpen() */
+    void         *backing_file;                  /**< Backing file, opened via Dmod_FileOpen(). NULL means the slot is unbound - reads/writes fall back to Dmod_ReadKernel()/Dmod_WriteKernel() (see handle_read()/handle_write()) */
     char          line_buf[DMTTY_LINE_BUFFER_SIZE]; /**< Canonical-mode line assembly buffer */
     size_t        line_len;                       /**< Bytes currently assembled into line_buf */
     size_t        line_pos;                       /**< Read offset into a completed line */
@@ -90,6 +90,8 @@ static dmtty_slot_t *find_slot_by_dev_num(dmdrvi_context_t context, const dmdrvi
 static dmtty_slot_t *find_slot_by_name_locked(dmdrvi_context_t context, const char *name);
 static dmtty_slot_t *find_slot_by_backing_path_locked(dmdrvi_context_t context, const char *backing_path);
 static int compare_slot_ptr(const void *data1, const void *data2);
+static size_t handle_read(dmtty_handle_t *h, void *buffer, size_t size);
+static size_t handle_write(dmtty_handle_t *h, const void *buffer, size_t size);
 static int attach_internal(dmdrvi_context_t context, const char *backing_path, const char *name,
                             uint32_t flags, dmdrvi_dev_num_t *dev_num_out);
 static int detach_internal(dmdrvi_context_t context, const char *name);
@@ -177,6 +179,38 @@ static dmtty_slot_t *find_slot_by_backing_path_locked(dmdrvi_context_t context, 
 static int compare_slot_ptr(const void *data1, const void *data2)
 {
     return (data1 == data2) ? 0 : 1;
+}
+
+/**
+ * @brief Read through a handle, falling back to raw kernel I/O when unbound
+ *
+ * An unbound slot (h->backing_file == NULL, see dmtty_slot_t::backing_path)
+ * has nothing to forward to/from, so /dev/tty instead reads straight from
+ * the kernel's raw stdin via Dmod_ReadKernel() - the same fallback stdio
+ * itself uses when nothing is bound (see dmod_sal.h).
+ */
+static size_t handle_read(dmtty_handle_t *h, void *buffer, size_t size)
+{
+    if (h->backing_file != NULL)
+    {
+        return Dmod_FileRead(buffer, 1, size, h->backing_file);
+    }
+    return Dmod_ReadKernel(buffer, size);
+}
+
+/**
+ * @brief Write through a handle, falling back to raw kernel I/O when unbound
+ *
+ * Counterpart of handle_read(): an unbound slot writes straight to the
+ * kernel's raw stdout via Dmod_WriteKernel().
+ */
+static size_t handle_write(dmtty_handle_t *h, const void *buffer, size_t size)
+{
+    if (h->backing_file != NULL)
+    {
+        return Dmod_FileWrite(buffer, 1, size, h->backing_file);
+    }
+    return Dmod_WriteKernel(buffer, size);
 }
 
 /**
@@ -444,7 +478,9 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, dmdrvi_context_t, _create, ( dmini_c
 
     /* [dmtty] section is optional: with no config at all dmtty still creates
      * an (unbound) /dev/tty with the usual echo+canonical defaults, ready to
-     * be pointed at a backing file later via dmtty_attach()/ioctl. */
+     * be pointed at a backing file later via dmtty_attach()/ioctl. Until then
+     * it forwards to/from the raw kernel stdin/stdout (see handle_read()/
+     * handle_write()) instead of going nowhere. */
     const char *backing = (config != NULL) ? dmini_get_string(config, "dmtty", "backing", NULL) : NULL;
     if (backing != NULL)
     {
@@ -558,28 +594,25 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, void*, _open, ( dmdrvi_context_t con
         return NULL;
     }
 
-    if (slot->backing_path == NULL)
-    {
-        DMOD_LOG_ERROR("dmtty: node has no backing file configured\n");
-        dmosi_mutex_lock(context->lock);
-        slot->open_count--;
-        dmosi_mutex_unlock(context->lock);
-        return NULL;
-    }
-
     /* Always open the backing file read-write: echo needs to write back to
      * it even when the caller only asked to read, and dmdevfs's own O_* flag
      * encoding does not line up 1:1 with DMDRVI_O_* (see docs/dmtty.md), so
      * trying to honor `flags` precisely here would be more misleading than
-     * helpful. */
-    void *backing_file = Dmod_FileOpen(slot->backing_path, "r+");
-    if (backing_file == NULL)
+     * helpful. An unbound slot (no `backing` configured, never attached) has
+     * nothing to open - it is left as NULL and handle_read()/handle_write()
+     * fall back to raw kernel stdin/stdout for it instead of failing here. */
+    void *backing_file = NULL;
+    if (slot->backing_path != NULL)
     {
-        DMOD_LOG_ERROR("dmtty: failed to open backing file '%s'\n", slot->backing_path);
-        dmosi_mutex_lock(context->lock);
-        slot->open_count--;
-        dmosi_mutex_unlock(context->lock);
-        return NULL;
+        backing_file = Dmod_FileOpen(slot->backing_path, "r+");
+        if (backing_file == NULL)
+        {
+            DMOD_LOG_ERROR("dmtty: failed to open backing file '%s'\n", slot->backing_path);
+            dmosi_mutex_lock(context->lock);
+            slot->open_count--;
+            dmosi_mutex_unlock(context->lock);
+            return NULL;
+        }
     }
 
     dmtty_handle_t *handle = Dmod_Malloc(sizeof(dmtty_handle_t));
@@ -682,10 +715,10 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, size_t, _read, ( dmdrvi_context_t co
 
     if (!canonical)
     {
-        size_t n = Dmod_FileRead(out, 1, size, h->backing_file);
+        size_t n = handle_read(h, out, size);
         if (echo && n > 0)
         {
-            Dmod_FileWrite(out, 1, n, h->backing_file);
+            handle_write(h, out, n);
         }
         return n;
     }
@@ -696,7 +729,7 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, size_t, _read, ( dmdrvi_context_t co
     while (!h->have_line)
     {
         uint8_t byte;
-        size_t n = Dmod_FileRead(&byte, 1, 1, h->backing_file);
+        size_t n = handle_read(h, &byte, 1);
         if (n == 0)
         {
             break; /* No more data available right now */
@@ -716,13 +749,13 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, size_t, _read, ( dmdrvi_context_t co
 
         if (echo)
         {
-            Dmod_FileWrite(&byte, 1, 1, h->backing_file);
+            handle_write(h, &byte, 1);
             if (byte == '\r')
             {
                 /* Echo the LF half too so the terminal actually advances
                  * to a new line instead of just returning to column 0. */
                 uint8_t lf = '\n';
-                Dmod_FileWrite(&lf, 1, 1, h->backing_file);
+                handle_write(h, &lf, 1);
             }
         }
 
@@ -768,7 +801,7 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, size_t, _write, ( dmdrvi_context_t c
     }
 
     dmtty_handle_t *h = (dmtty_handle_t *)handle;
-    return Dmod_FileWrite(buffer, 1, size, h->backing_file);
+    return handle_write(h, buffer, size);
 }
 
 dmod_dmdrvi_dif_api_declaration(1.0, dmtty, int, _ioctl, ( dmdrvi_context_t context, void* handle, int command, void* arg ))

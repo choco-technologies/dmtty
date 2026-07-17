@@ -40,8 +40,10 @@ void* dmtty_dmdrvi_open(dmdrvi_context_t context, int flags, const dmdrvi_dev_nu
 
 Opens a handle to one of the context's nodes, identified by `dev_num`
 (the main node's, or one returned by a prior `dmtty_attach()` call /
-`DMTTY_HANDLER_NAME_DEVICE_AVAILABLE` event). Fails if the node has no
-backing file configured yet, or if the backing file cannot be opened.
+`DMTTY_HANDLER_NAME_DEVICE_AVAILABLE` event). Fails only if the backing file
+cannot be opened; a node with no backing file configured yet opens fine and
+forwards to/from the raw kernel stdin/stdout (`Dmod_ReadKernel`/
+`Dmod_WriteKernel`) instead.
 
 The backing file is always opened read-write regardless of `flags`, since
 echo needs to write back to it even on a read-only open.

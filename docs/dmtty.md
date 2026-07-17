@@ -81,8 +81,10 @@ no name is given, or under the requested name otherwise).
 ### Line discipline
 
 Each open handle forwards data directly to/from the backing file
-(`Dmod_FileRead`/`Dmod_FileWrite`), with two independent behaviors controlled
-by the node's IO flags (`dmtty_flags_t`):
+(`Dmod_FileRead`/`Dmod_FileWrite`), or, for a node with no backing file
+attached yet, straight to/from the raw kernel stdin/stdout
+(`Dmod_ReadKernel`/`Dmod_WriteKernel`) - with two independent behaviors
+controlled by the node's IO flags (`dmtty_flags_t`):
 
 - **`dmtty_flag_echo`** - every byte read back is also written back to the
   backing file, so whoever is on the other end (e.g. a terminal emulator

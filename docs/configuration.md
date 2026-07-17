@@ -13,8 +13,8 @@ All parameters are in the `[dmtty]` section:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `backing` | string | (unset) | Full path of the file to forward `/dev/tty` to/from at boot, e.g. `/dev/dmuart1`. Left unset, `/dev/tty` exists but is unbound until something attaches a backing file to it. |
-| `echo` | bool (`on`/`off`/`1`/`0`/`true`/`false`) | `on` | Echo bytes read back to the backing file |
+| `backing` | string | (unset) | Full path of the file to forward `/dev/tty` to/from at boot, e.g. `/dev/dmuart1`. Left unset, `/dev/tty` exists but is unbound until something attaches a backing file to it - reads/writes fall back to the raw kernel stdin/stdout (`Dmod_ReadKernel`/`Dmod_WriteKernel`) in the meantime. |
+| `echo` | bool (`on`/`off`/`1`/`0`/`true`/`false`) | `on` | Echo bytes read back to the backing file (or to raw kernel stdout, while unbound) |
 | `canonical` | bool (`on`/`off`/`1`/`0`/`true`/`false`) | `on` | Assemble input into complete lines before a read returns any of it |
 
 Since `config` may also be `NULL` (dmtty is not given a config file at all),
