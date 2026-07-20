@@ -97,8 +97,12 @@ jobs:
           cp "$BUILD_DIR/packages/tty.zip" "$TTY_ARCHIVE"
           zip -j "$TTY_ARCHIVE" RELEASE_NOTES.txt
 
+          CONSOLE_ARCHIVE="console-${{ github.event.release.tag_name }}-$ARCH_DIR_NAME.zip"
+          cp "$BUILD_DIR/packages/console.zip" "$CONSOLE_ARCHIVE"
+          zip -j "$CONSOLE_ARCHIVE" RELEASE_NOTES.txt
+
           echo "Created archives:"
-          ls -lh dmtty-*.zip tty-*.zip
+          ls -lh dmtty-*.zip tty-*.zip console-*.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -107,6 +111,7 @@ jobs:
           path: |
             dmtty-${{ github.event.release.tag_name }}-*.zip
             tty-${{ github.event.release.tag_name }}-*.zip
+            console-${{ github.event.release.tag_name }}-*.zip
           retention-days: 1
 
   generate-versions-manifest:
@@ -141,6 +146,7 @@ jobs:
           echo "Found versions: $VERSIONS"
           echo "\$version-available dmtty $VERSIONS" >> versions.dmm
           echo "\$version-available tty $VERSIONS" >> versions.dmm
+          echo "\$version-available console $VERSIONS" >> versions.dmm
 
           echo "Generated versions.dmm:"
           cat versions.dmm
