@@ -82,12 +82,18 @@ dmod_add_library(${DMOD_MODULE_NAME} ${DMOD_MODULE_VERSION}
 # dmtty has no MCU/architecture-specific code (unlike dmuart/dmfmc it does not
 # need a _port layer): it only forwards to/from an already-open backing file
 # via generic dmod SAL file calls, so it builds identically for every target.
+#
+# libsystemd@>=0.3.1 is required for libsystemd_notify_device_added()/
+# libsystemd_notify_device_removed() (device rules with a user_value/%v
+# parameter, used by dmdrvi_path_ready() below to report tty nodes - see
+# examples/console.rules and examples/console@.ini in the console module).
 dmod_link_modules(${DMOD_MODULE_NAME}
     dmdrvi
     dmini
     dmhaman
     dmlist
     dmosi
+    libsystemd
 )
 
 target_include_directories(${DMOD_MODULE_NAME} PRIVATE
@@ -100,3 +106,4 @@ target_include_directories(${DMOD_MODULE_NAME} PRIVATE
 # Built together with dmtty itself, sharing this same dmod fetch/config
 # instead of setting up a second, separate DMOD project.
 add_subdirectory(tools/tty)
+add_subdirectory(tools/console)

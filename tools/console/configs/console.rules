@@ -1,0 +1,11 @@
+; console.rules - libsystemd device rule.
+;
+; Tells libsystemd that every device dmtty reports under class "tty" (the
+; main /dev/tty node plus any attached via dmtty_attach() or a dmhaman
+; hot-plug event - see ../../../docs/configuration.md) should start a
+; console@<name> instance, instantiated on demand from console@.ini.
+;
+; Load with libsystemd_load_rules() on the directory this file lives in -
+; see dmsystem's docs/configuration.md ("Device rules").
+[class=tty]
+start=console@%name

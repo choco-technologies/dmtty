@@ -7,3 +7,7 @@ dmtty https://github.com/choco-technologies/dmtty/releases/download/v<version>/d
 # tty is a compiled Application module (tools/tty), so it is
 # architecture-dependent, just like dmtty itself
 tty https://github.com/choco-technologies/dmtty/releases/download/v<version>/tty-v<version>-<arch_name>.zip
+
+# console is a compiled Application module (tools/console), so it is
+# architecture-dependent, just like dmtty and tty
+console https://github.com/choco-technologies/dmtty/releases/download/v<version>/console-v<version>-<arch_name>.zip

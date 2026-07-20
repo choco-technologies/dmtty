@@ -6,8 +6,18 @@
 #include "dmini.h"
 #include "dmlist.h"
 #include "dmosi.h"
+#include "libsystemd.h"
 #include <errno.h>
 #include <string.h>
+
+/**
+ * @brief Device class dmtty reports itself under to libsystemd
+ *
+ * Matches the `[class=tty]` section a device rules file (see
+ * examples/console.rules) uses to map a newly-reported tty node to a
+ * service template such as console@.ini.
+ */
+#define DMTTY_LIBSYSTEMD_DEVICE_CLASS "tty"
 
 /* Magic set to "DTTY" */
 #define DMTTY_CONTEXT_MAGIC     0x44545459
@@ -322,6 +332,19 @@ static int detach_internal(dmdrvi_context_t context, const char *name)
     dmosi_mutex_unlock(context->lock);
 
     dmdrvi_device_unavailable(context, &dev_num);
+
+    /* Best-effort: libsystemd is an optional integration (device rules /
+     * console@.ini), not a hard dependency of dmtty - a build/deployment
+     * without it loaded must keep attaching/detaching nodes normally. */
+    if (Dmod_IsFunctionConnected((void*)libsystemd_notify_device_removed))
+    {
+        int notify_ret = libsystemd_notify_device_removed(DMTTY_LIBSYSTEMD_DEVICE_CLASS, name);
+        if (notify_ret != 0 && notify_ret != -ENOENT)
+        {
+            DMOD_LOG_WARN("dmtty: libsystemd_notify_device_removed('%s') failed: %d\n", name, notify_ret);
+        }
+    }
+
     Dmod_Free(slot->backing_path);
     Dmod_Free(slot);
 
@@ -909,4 +932,54 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, int, _stat, ( dmdrvi_context_t conte
     stat->size = 0;    /* Stream device, no fixed size */
     stat->mode = 0666; /* Read-write permissions */
     return 0;
+}
+
+/**
+ * @brief dmdrvi_path_ready DIF - reports the newly-known absolute path of
+ *        one of this context's device nodes to libsystemd
+ *
+ * Called by dmdevfs once a node's absolute path is resolvable (see
+ * dmdrvi.h) - for the main /dev/tty node that is shortly after dmdevfs
+ * itself mounts; for a node created via dmtty_attach()/the dmhaman
+ * hot-plug event (see attach_internal()) it fires right away, since
+ * dmdevfs is already mounted by then. Forwards (class="tty", node name,
+ * absolute path) to libsystemd_notify_device_added() so a device rules
+ * file (see examples/console.rules) can start a console@<name> instance
+ * with the path available as %v/user_parameter - see docs/configuration.md.
+ */
+dmod_dmdrvi_dif_api_declaration(1.0, dmtty, void, _path_ready, ( dmdrvi_context_t context, const dmdrvi_dev_num_t* dev_num, const char* path ))
+{
+    if (!is_valid_context(context) || dev_num == NULL || path == NULL)
+    {
+        return;
+    }
+
+    dmosi_mutex_lock(context->lock);
+    dmtty_slot_t *slot = find_slot_by_dev_num(context, dev_num);
+    char name_buf[DMDRVI_ALT_NAME_MAX_LEN + 1];
+    if (slot != NULL)
+    {
+        Dmod_SnPrintf(name_buf, sizeof(name_buf), "%s", slot->dev_num.alt_name);
+    }
+    dmosi_mutex_unlock(context->lock);
+
+    if (slot == NULL)
+    {
+        DMOD_LOG_WARN("dmtty: path_ready for an unknown device number, ignoring\n");
+        return;
+    }
+
+    /* Best-effort: libsystemd is an optional integration (device rules /
+     * console@.ini), not a hard dependency of dmtty - a build/deployment
+     * without it loaded must keep exposing device nodes normally. */
+    if (!Dmod_IsFunctionConnected((void*)libsystemd_notify_device_added))
+    {
+        return;
+    }
+
+    int notify_ret = libsystemd_notify_device_added(DMTTY_LIBSYSTEMD_DEVICE_CLASS, name_buf, path);
+    if (notify_ret != 0)
+    {
+        DMOD_LOG_WARN("dmtty: libsystemd_notify_device_added('%s', '%s') failed: %d\n", name_buf, path, notify_ret);
+    }
 }
