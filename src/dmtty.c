@@ -14,8 +14,8 @@
  * @brief Device class dmtty reports itself under to libsystemd
  *
  * Matches the `[class=tty]` section a device rules file (see
- * examples/console.rules) uses to map a newly-reported tty node to a
- * service template such as console@.ini.
+ * tools/console/configs/console.rules) uses to map a newly-reported tty
+ * node to a service template such as console@.ini.
  */
 #define DMTTY_LIBSYSTEMD_DEVICE_CLASS "tty"
 
@@ -944,8 +944,9 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, int, _stat, ( dmdrvi_context_t conte
  * hot-plug event (see attach_internal()) it fires right away, since
  * dmdevfs is already mounted by then. Forwards (class="tty", node name,
  * absolute path) to libsystemd_notify_device_added() so a device rules
- * file (see examples/console.rules) can start a console@<name> instance
- * with the path available as %v/user_parameter - see docs/configuration.md.
+ * file (see tools/console/configs/console.rules) can start a console@<name>
+ * instance with the path available as %v/user_parameter - see
+ * docs/configuration.md.
  */
 dmod_dmdrvi_dif_api_declaration(1.0, dmtty, void, _path_ready, ( dmdrvi_context_t context, const dmdrvi_dev_num_t* dev_num, const char* path ))
 {
