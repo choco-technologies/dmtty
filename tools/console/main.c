@@ -1,4 +1,5 @@
 #include "dmod.h"
+#include "dmosi.h"
 #include <errno.h>
 
 /**
@@ -47,12 +48,6 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if (!Dmod_IsFunctionConnected((void *)Dmod_SpawnModule))
-    {
-        Dmod_Printf("console: module spawning is unavailable on this build/platform\n");
-        return 1;
-    }
-
     const Dmod_StreamRedirection_t entries[] =
     {
         { DMOD_STDIN,  device_path },
@@ -67,6 +62,24 @@ int main(int argc, char *argv[])
     {
         Dmod_Printf("console: failed to start '%s' on '%s': error %d\n", shell_module, device_path, ret);
         return 1;
+    }
+
+    // Deliberately not returning here: libsystemd only ever tracks the PID this unit's
+    // own process was spawned with (see console@.ini/libsystemd_start_service_internal()),
+    // never the shell's - so as far as service-stop/device-removal handling is concerned,
+    // this process *is* the console@<device> unit for as long as the shell runs. Waiting
+    // here (rather than exiting right after the spawn, as this used to do) keeps that PID
+    // alive and findable for the whole session, so dmosi_process_kill() on it - which
+    // recursively kills every process parented under it, i.e. the shell and anything it
+    // spawned - actually reaches the shell instead of finding nothing left to kill.
+    //
+    // The shell still gets its own freshly-sized stack from Dmod_SpawnModule above (per
+    // its own module's declared stack size) - it is not run in-place on this thread's own
+    // stack, which was only ever sized for console itself.
+    dmosi_process_t shell_process = dmosi_process_find_by_id((dmosi_process_id_t)ret);
+    if (shell_process != NULL)
+    {
+        dmosi_process_wait(shell_process, -1);
     }
 
     return 0;
