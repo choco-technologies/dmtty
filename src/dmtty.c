@@ -852,9 +852,25 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, int, _ioctl, ( dmdrvi_context_t cont
             return 0;
 
         case dmtty_ioctl_cmd_set_flags:
+        {
             if (arg == NULL) return -EINVAL;
             slot->flags = *(uint32_t *)arg;
+
+            /* An unbound handle (no backing file) has handle_read()/handle_write()
+             * fall back to Dmod_ReadKernel()/Dmod_WriteKernel() - the raw kernel
+             * console path, whose own echo/canonical behavior is controlled
+             * separately (see Dmod_SetKernelInputFlags() in dmod_sal.h), entirely
+             * independent of slot->flags above. Forward there too, exactly as
+             * handle_read()/handle_write() forward reads/writes in that same case. */
+            if (h->backing_file == NULL)
+            {
+                uint32_t kernel_flags = 0;
+                if (slot->flags & dmtty_flag_echo)      kernel_flags |= DMOD_STDIN_FLAG_ECHO;
+                if (slot->flags & dmtty_flag_canonical) kernel_flags |= DMOD_STDIN_FLAG_CANONICAL;
+                Dmod_SetKernelInputFlags(kernel_flags);
+            }
             return 0;
+        }
 
         case dmtty_ioctl_cmd_get_backing_path:
             if (arg == NULL) return -EINVAL;
@@ -954,6 +970,7 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, void, _path_ready, ( dmdrvi_context_
     {
         return;
     }
+    DMOD_LOG_INFO("path '%s' ready. Reporting to the tty\n", path);
 
     dmosi_mutex_lock(context->lock);
     dmtty_slot_t *slot = find_slot_by_dev_num(context, dev_num);
