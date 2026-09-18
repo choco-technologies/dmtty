@@ -11,4 +11,5 @@ dmod_add_executable(${DMOD_MODULE_NAME} ${DMOD_MODULE_VERSION}
 
 dmod_link_modules(${DMOD_MODULE_NAME} 
     dmosi
+    libsystemd
 )
