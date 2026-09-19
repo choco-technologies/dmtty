@@ -476,7 +476,7 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, dmdrvi_context_t, _create, ( dmini_c
     }
     memset(context, 0, sizeof(*context));
     context->magic = DMTTY_CONTEXT_MAGIC;
-    context->slots = dmlist_create(DMOD_MODULE_NAME);
+    context->slots = dmlist_create();
     context->lock  = dmosi_mutex_create(false);
     if (context->slots == NULL || context->lock == NULL)
     {
