@@ -51,6 +51,7 @@ typedef struct
     uint32_t         flags;                             /**< Current IO flags (dmtty_flags_t bitmask) */
     int              open_count;                        /**< Number of handles currently open on this slot */
     void            *foreground_handle;                 /**< The dmtty_handle_t currently allowed to read from this slot, NULL if unclaimed (see DMTTY_FOREGROUND_POLL_MS) */
+    bool             detached;                          /**< Force-detached while still open (see detach_internal()) - already removed from context->slots, freed by the last _close() instead of here */
 } dmtty_slot_t;
 
 /**
@@ -104,7 +105,7 @@ static size_t handle_read(dmtty_handle_t *h, void *buffer, size_t size);
 static size_t handle_write(dmtty_handle_t *h, const void *buffer, size_t size);
 static int attach_internal(dmdrvi_context_t context, const char *backing_path, const char *name,
                             uint32_t flags, dmdrvi_dev_num_t *dev_num_out);
-static int detach_internal(dmdrvi_context_t context, const char *name);
+static int detach_internal(dmdrvi_context_t context, const char *name, bool force);
 static int on_device_available(void *parameters, void *user_ctx);
 static int on_device_unavailable(void *parameters, void *user_ctx);
 
@@ -298,8 +299,22 @@ static int attach_internal(dmdrvi_context_t context, const char *backing_path, c
 
 /**
  * @brief Shared implementation behind dmtty_detach()
+ *
+ * @param force When the slot is still open (open_count > 0), the explicit
+ *   dmtty_detach() API (force=false) refuses with -EBUSY so a caller can
+ *   retry - but the hot-plug DEVICE_UNAVAILABLE path (force=true, see
+ *   on_device_unavailable()) has no "later" to retry at: the backing device
+ *   is already gone, and every handle still open on it (e.g. a shell
+ *   blocked in read()) will see EOF on its next read and close on its own
+ *   eventually. Forcing here unpublishes the slot immediately (removed from
+ *   context->slots, so it can no longer be found/reopened) while leaving the
+ *   struct itself alive for those handles' `h->slot` pointers - the last
+ *   _close() on it does the actual free (see the `detached` check there).
+ *   Without this, a backing device that goes away while still open (true for
+ *   essentially every telnetd disconnect, since the shell reading it is
+ *   normally mid-read at that exact moment) would leak this slot forever.
  */
-static int detach_internal(dmdrvi_context_t context, const char *name)
+static int detach_internal(dmdrvi_context_t context, const char *name, bool force)
 {
     if (!is_valid_context(context) || name == NULL || name[0] == '\0')
     {
@@ -321,14 +336,19 @@ static int detach_internal(dmdrvi_context_t context, const char *name)
         dmosi_mutex_unlock(context->lock);
         return -ENOENT;
     }
-    if (slot->open_count > 0)
+    if (slot->open_count > 0 && !force)
     {
         dmosi_mutex_unlock(context->lock);
         return -EBUSY;
     }
 
+    bool free_now = (slot->open_count == 0);
     dmdrvi_dev_num_t dev_num = slot->dev_num;
     dmlist_remove(context->slots, slot, compare_slot_ptr);
+    if (!free_now)
+    {
+        slot->detached = true;
+    }
     dmosi_mutex_unlock(context->lock);
 
     dmdrvi_device_unavailable(context, &dev_num);
@@ -345,8 +365,11 @@ static int detach_internal(dmdrvi_context_t context, const char *name)
         }
     }
 
-    Dmod_Free(slot->backing_path);
-    Dmod_Free(slot);
+    if (free_now)
+    {
+        Dmod_Free(slot->backing_path);
+        Dmod_Free(slot);
+    }
 
     DMOD_LOG_INFO("dmtty: detached '%s'\n", name);
     return 0;
@@ -410,7 +433,7 @@ static int on_device_unavailable(void *parameters, void *user_ctx)
         return -ENOENT;
     }
 
-    int ret = detach_internal(context, name_buf);
+    int ret = detach_internal(context, name_buf, true);
     if (ret != 0)
     {
         DMOD_LOG_ERROR("dmtty: failed to detach '%s' from device_unavailable event: %d\n", name_buf, ret);
@@ -450,7 +473,7 @@ int dmtty_detach(const char *name)
     {
         return -ENODEV;
     }
-    return detach_internal(g_default_context, name);
+    return detach_internal(g_default_context, name, false);
 }
 
 /* ---- DMDRVI interface ---- */
@@ -690,7 +713,18 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, void, _close, ( dmdrvi_context_t con
          * background) becomes the new foreground reader. */
         h->slot->foreground_handle = NULL;
     }
+    /* Already unpublished by a force-detach while this was the last open
+     * handle on it (see detach_internal()'s `force` parameter) - finish the
+     * free that was deferred until now. */
+    bool free_slot = h->slot->detached && h->slot->open_count == 0;
+    dmtty_slot_t *slot_to_free = free_slot ? h->slot : NULL;
     dmosi_mutex_unlock(context->lock);
+
+    if (slot_to_free != NULL)
+    {
+        Dmod_Free(slot_to_free->backing_path);
+        Dmod_Free(slot_to_free);
+    }
 
     Dmod_Free(handle);
 }
