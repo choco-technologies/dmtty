@@ -478,7 +478,7 @@ int dmtty_detach(const char *name)
 
 /* ---- DMDRVI interface ---- */
 
-dmod_dmdrvi_dif_api_declaration(1.0, dmtty, dmdrvi_context_t, _create, ( dmini_context_t config, dmdrvi_dev_num_t* dev_num ))
+dmod_dmdrvi_dif_api_declaration(2.0, dmtty, dmdrvi_context_t, _create, ( dmini_context_t config, dmdrvi_dev_num_t* dev_num ))
 {
     if (dev_num == NULL)
     {
@@ -581,7 +581,7 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, dmdrvi_context_t, _create, ( dmini_c
     return context;
 }
 
-dmod_dmdrvi_dif_api_declaration(1.0, dmtty, void, _free, ( dmdrvi_context_t context ))
+dmod_dmdrvi_dif_api_declaration(2.0, dmtty, void, _free, ( dmdrvi_context_t context ))
 {
     if (!is_valid_context(context))
     {
@@ -618,7 +618,7 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, void, _free, ( dmdrvi_context_t cont
  * exposes the main /dev/tty node plus every node created via dmtty_attach()
  * or a dmhaman hot-plug event, so dev_num is required to pick the right one.
  */
-dmod_dmdrvi_dif_api_declaration(1.0, dmtty, void*, _open, ( dmdrvi_context_t context, int flags, const dmdrvi_dev_num_t* dev_num ))
+dmod_dmdrvi_dif_api_declaration(2.0, dmtty, void*, _open, ( dmdrvi_context_t context, int flags, const dmdrvi_dev_num_t* dev_num ))
 {
     if (!is_valid_context(context) || dev_num == NULL)
     {
@@ -689,7 +689,7 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, void*, _open, ( dmdrvi_context_t con
     return handle;
 }
 
-dmod_dmdrvi_dif_api_declaration(1.0, dmtty, void, _close, ( dmdrvi_context_t context, void* handle ))
+dmod_dmdrvi_dif_api_declaration(2.0, dmtty, void, _close, ( dmdrvi_context_t context, void* handle ))
 {
     if (!is_valid_context(context) || handle == NULL)
     {
@@ -729,9 +729,19 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, void, _close, ( dmdrvi_context_t con
     Dmod_Free(handle);
 }
 
-dmod_dmdrvi_dif_api_declaration(1.0, dmtty, size_t, _read, ( dmdrvi_context_t context, void* handle, void* buffer, size_t size, uint32_t offset ))
+dmod_dmdrvi_dif_api_declaration(2.0, dmtty, dmdrvi_ssize_t, _read, ( dmdrvi_context_t context, void* handle, void* buffer, size_t size, dmdrvi_offset_t offset ))
 {
-    (void)offset;
+    /* dmtty is a stream device (terminal), not seekable - offset has no
+     * meaning here beyond being validated, same as dmclk's non-seekable
+     * contract. */
+    if (offset < 0)
+    {
+        return -EINVAL;
+    }
+    if (size > (size_t)INT64_MAX)
+    {
+        return -EOVERFLOW;
+    }
     if (!is_valid_context(context) || handle == NULL || buffer == NULL || size == 0)
     {
         return 0;
@@ -777,7 +787,7 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, size_t, _read, ( dmdrvi_context_t co
         {
             handle_write(h, out, n);
         }
-        return n;
+        return (dmdrvi_ssize_t)n;
     }
 
     /* Canonical mode: assemble a full line into h->line_buf before handing
@@ -846,22 +856,32 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, size_t, _read, ( dmdrvi_context_t co
         h->have_line = false;
     }
 
-    return to_copy;
+    return (dmdrvi_ssize_t)to_copy;
 }
 
-dmod_dmdrvi_dif_api_declaration(1.0, dmtty, size_t, _write, ( dmdrvi_context_t context, void* handle, const void* buffer, size_t size, uint32_t offset ))
+dmod_dmdrvi_dif_api_declaration(2.0, dmtty, dmdrvi_ssize_t, _write, ( dmdrvi_context_t context, void* handle, const void* buffer, size_t size, dmdrvi_offset_t offset ))
 {
-    (void)offset;
+    /* dmtty is a stream device (terminal), not seekable - offset has no
+     * meaning here beyond being validated, same as dmclk's non-seekable
+     * contract. */
+    if (offset < 0)
+    {
+        return -EINVAL;
+    }
+    if (size > (size_t)INT64_MAX)
+    {
+        return -EOVERFLOW;
+    }
     if (!is_valid_context(context) || handle == NULL || buffer == NULL || size == 0)
     {
         return 0;
     }
 
     dmtty_handle_t *h = (dmtty_handle_t *)handle;
-    return handle_write(h, buffer, size);
+    return (dmdrvi_ssize_t)handle_write(h, buffer, size);
 }
 
-dmod_dmdrvi_dif_api_declaration(1.0, dmtty, int, _ioctl, ( dmdrvi_context_t context, void* handle, int command, void* arg ))
+dmod_dmdrvi_dif_api_declaration(2.0, dmtty, int, _ioctl, ( dmdrvi_context_t context, void* handle, int command, void* arg ))
 {
     if (!is_valid_context(context) || handle == NULL)
     {
@@ -960,7 +980,7 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, int, _ioctl, ( dmdrvi_context_t cont
     }
 }
 
-dmod_dmdrvi_dif_api_declaration(1.0, dmtty, int, _flush, ( dmdrvi_context_t context, void* handle ))
+dmod_dmdrvi_dif_api_declaration(2.0, dmtty, int, _flush, ( dmdrvi_context_t context, void* handle ))
 {
     if (!is_valid_context(context) || handle == NULL)
     {
@@ -970,7 +990,7 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, int, _flush, ( dmdrvi_context_t cont
     return 0;
 }
 
-dmod_dmdrvi_dif_api_declaration(1.0, dmtty, int, _stat, ( dmdrvi_context_t context, const char* path, dmdrvi_stat_t* stat ))
+dmod_dmdrvi_dif_api_declaration(2.0, dmtty, int, _stat, ( dmdrvi_context_t context, const char* path, dmdrvi_stat_t* stat ))
 {
     (void)path;
     if (!is_valid_context(context) || stat == NULL)
@@ -979,8 +999,8 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, int, _stat, ( dmdrvi_context_t conte
         return -EINVAL;
     }
 
-    stat->size = 0;    /* Stream device, no fixed size */
-    stat->mode = 0666; /* Read-write permissions */
+    stat->size = (dmdrvi_size_t)0; /* Stream device, no fixed size */
+    stat->mode = 0666;             /* Read-write permissions */
     return 0;
 }
 
@@ -998,7 +1018,7 @@ dmod_dmdrvi_dif_api_declaration(1.0, dmtty, int, _stat, ( dmdrvi_context_t conte
  * instance with the path available as %v/user_parameter - see
  * docs/configuration.md.
  */
-dmod_dmdrvi_dif_api_declaration(1.0, dmtty, void, _path_ready, ( dmdrvi_context_t context, const dmdrvi_dev_num_t* dev_num, const char* path ))
+dmod_dmdrvi_dif_api_declaration(2.0, dmtty, void, _path_ready, ( dmdrvi_context_t context, const dmdrvi_dev_num_t* dev_num, const char* path ))
 {
     if (!is_valid_context(context) || dev_num == NULL || path == NULL)
     {
