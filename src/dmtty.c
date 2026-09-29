@@ -10,6 +10,11 @@
 #include <errno.h>
 #include <string.h>
 
+#ifdef DMDRVI_IOCTL_CUSTOM_BASE
+_Static_assert(dmtty_ioctl_cmd_get_flags == DMDRVI_IOCTL_CUSTOM_BASE,
+               "dmtty private ioctl commands must start at DMDRVI_IOCTL_CUSTOM_BASE");
+#endif
+
 /**
  * @brief Device class dmtty reports itself under to libsystemd
  *
@@ -889,10 +894,12 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmtty, int, _ioctl, ( dmdrvi_context_t cont
         return -EINVAL;
     }
 
-    if (command <= 0 || command >= dmtty_ioctl_cmd_max)
+    /* Not an error: generic clients (e.g. dmdevfs probing every node for the
+     * block/monitor classes) send standard DMDRVI_IOCTL_* commands a tty does
+     * not implement - answer -ENOTTY quietly, as dmdrvi expects. */
+    if (command < dmtty_ioctl_cmd_get_flags || command >= dmtty_ioctl_cmd_max)
     {
-        DMOD_LOG_ERROR("dmtty: invalid ioctl command %d\n", command);
-        return -EINVAL;
+        return -ENOTTY;
     }
 
     dmtty_handle_t *h = (dmtty_handle_t *)handle;
@@ -976,7 +983,7 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmtty, int, _ioctl, ( dmdrvi_context_t cont
             return 0;
 
         default:
-            return -EINVAL;
+            return -ENOTTY;
     }
 }
 
