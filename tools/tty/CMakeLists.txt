@@ -26,3 +26,8 @@ target_include_directories(tty PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_BINARY_DIR}
 )
+
+# dmtty_types.h pulls in dmdrvi_ioctl.h (DMDRVI_IOCTL_CUSTOM_BASE)
+dmod_link_modules(tty
+    dmdrvi
+)

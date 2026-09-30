@@ -2,6 +2,7 @@
 #define DMTTY_TYPES_H
 
 #include <stdint.h>
+#include "dmdrvi_ioctl.h"
 #include <stdbool.h>
 
 /**
@@ -44,10 +45,10 @@ typedef enum
  */
 typedef enum
 {
-    /* Private commands start at DMDRVI_IOCTL_CUSTOM_BASE (0x1000, dmdrvi_ioctl.h)
+    /* Private commands start at DMDRVI_IOCTL_CUSTOM_BASE (dmdrvi_ioctl.h)
      * so they never collide with the standard DMDRVI_IOCTL_* commands (network,
      * block, monitor) that dmdevfs and other generic clients send to any node. */
-    dmtty_ioctl_cmd_get_flags = 0x1000,  /**< Get current IO flags; arg = uint32_t* (dmtty_flags_t bitmask) */
+    dmtty_ioctl_cmd_get_flags = DMDRVI_IOCTL_CUSTOM_BASE, /**< Get current IO flags; arg = uint32_t* (dmtty_flags_t bitmask) */
     dmtty_ioctl_cmd_set_flags,           /**< Set IO flags; arg = uint32_t* (dmtty_flags_t bitmask) */
     dmtty_ioctl_cmd_get_backing_path,    /**< Get backing file path; arg = char[DMTTY_MAX_PATH_LEN + 1] */
     dmtty_ioctl_cmd_set_backing_path,    /**< Re-point this node to another backing file; arg = const char* */

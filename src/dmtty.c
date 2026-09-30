@@ -10,11 +10,6 @@
 #include <errno.h>
 #include <string.h>
 
-#ifdef DMDRVI_IOCTL_CUSTOM_BASE
-_Static_assert(dmtty_ioctl_cmd_get_flags == DMDRVI_IOCTL_CUSTOM_BASE,
-               "dmtty private ioctl commands must start at DMDRVI_IOCTL_CUSTOM_BASE");
-#endif
-
 /**
  * @brief Device class dmtty reports itself under to libsystemd
  *
