@@ -19,6 +19,7 @@ forwards raw bytes, so redirecting to it gives you a terminal with no echo.
 ## Features
 
 - **Standard DMDRVI Interface**: Read/write/ioctl device access pattern, like any other DMOD driver
+- **CRLF Output**: LF to CRLF conversion for terminal writes and echo, preserving existing CRLF; configurable per node independently of input flags
 - **Echo & Canonical Mode**: Per-node IO flags, configurable via ioctl at runtime
 - **One Main Node, Many Extra Nodes**: Creates `/dev/tty` from configuration, then exposes an API to attach any number of additional nodes to other backing files
 - **Two Attach Paths**: A direct API (`dmtty_attach()`) and a `dmhaman` hot-plug event (`DMTTY_HANDLER_NAME_DEVICE_AVAILABLE`) for drivers that don't want a compile-time dependency on dmtty
@@ -73,6 +74,20 @@ dmell < /dev/tty1 > /dev/tty1
 cmake -B build
 cmake --build build
 ```
+
+### Output regression tests
+
+After configuring a module build (which supplies generated dependency headers),
+run the host-side regression harness with Python 3 and a host C compiler:
+
+```bash
+python3 tests/run_output_test.py build
+```
+
+It exercises the driver implementation with a stream backend that can perform
+short writes: LF/CRLF, split writes across handles, retries, binary raw mode,
+output ioctls, kernel fallback, and canonical input echo.
+
 
 ## Documentation
 

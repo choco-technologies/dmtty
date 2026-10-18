@@ -90,9 +90,14 @@ Reads from the backing file through the node's line discipline:
 size_t dmtty_dmdrvi_write(dmdrvi_context_t context, void* handle, const void* buffer, size_t size, uint32_t offset);
 ```
 
-Forwards `buffer` directly to the backing file. `offset` is ignored.
+Writes through the node's output discipline to its backing file (or raw
+kernel stdout while unbound). With `onlcr` enabled (the default), LF becomes
+CRLF; an existing CRLF stays unchanged, including across calls and open handles.
+Input echo/canonical flags do not affect output processing. `offset` is ignored.
 
-**Returns:** Number of bytes actually written.
+**Returns:** Number of caller bytes consumed, excluding inserted CR bytes.
+A short write can be retried from that offset, including when the backend
+accepted the inserted CR but could not yet accept its LF.
 
 ---
 
@@ -211,3 +216,20 @@ dmhaman_call_handler(DMTTY_HANDLER_NAME_DEVICE_AVAILABLE, &params);
 
 `dmtty` reacts exactly as `dmtty_attach(params.path, params.name, params.flags)`
 would.
+
+## Output ioctls
+
+`dmtty_ioctl_cmd_get_onlcr` and `dmtty_ioctl_cmd_set_onlcr` take a `bool*` and
+read/change LF to CRLF processing for the entire node. Both return `-EINVAL`
+for a null argument. New nodes default to enabled; the main node can override
+this with `[dmtty] onlcr=off`. These commands are appended to the existing
+ioctl range, preserving previous command numbers.
+
+```c
+bool enabled = false;
+Dmod_Ioctl(file, dmtty_ioctl_cmd_set_onlcr, &enabled);
+```
+
+This preference is independent of input echo/canonical flags. For binary
+output, disable `onlcr` explicitly (or write to the backing device directly).
+Clearing input flags alone still permits terminal output in shell line editors.

@@ -83,7 +83,7 @@ no name is given, or under the requested name otherwise).
 Each open handle forwards data directly to/from the backing file
 (`Dmod_FileRead`/`Dmod_FileWrite`), or, for a node with no backing file
 attached yet, straight to/from the raw kernel stdin/stdout
-(`Dmod_ReadKernel`/`Dmod_WriteKernel`) - with two independent behaviors
+(`Dmod_ReadKernel`/`Dmod_WriteKernel`) - with input behaviors
 controlled by the node's IO flags (`dmtty_flags_t`):
 
 - **`dmtty_flag_echo`** - every byte read back is also written back to the
@@ -98,6 +98,23 @@ Both flags can be read/written per node via `ioctl()` (`dmtty_ioctl_cmd_get_flag
 / `dmtty_ioctl_cmd_set_flags`), and the backing file itself can be
 re-pointed at runtime via `dmtty_ioctl_cmd_get_backing_path` /
 `dmtty_ioctl_cmd_set_backing_path`.
+
+### Output line discipline
+
+By default, application output and input echo convert LF to CRLF before
+reaching the backing stream. Existing CRLF is preserved even across writes
+from separate handles of the same node. Per-node serialization prevents an
+inserted CR and its LF from interleaving with another writer. Short-write
+results count caller bytes, so callers can retry without duplicating CR.
+
+The `onlcr` configuration key and get/set-onlcr ioctls control this behavior.
+Input echo/canonical flags do not affect output processing: shell line editors
+can disable input processing while still writing terminal text. For full binary
+I/O, disable `onlcr` as well as echo/canonical input (or use the backing device
+directly). The YMODEM receiver's binary input and LF-free output control bytes
+are unaffected. Low-level UART drivers, ordinary files and kernel logging
+outside the TTY remain byte streams.
+
 
 ## Features
 
