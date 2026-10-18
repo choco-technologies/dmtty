@@ -29,3 +29,6 @@ jobs:
 
           echo "Build completed"
           ls -lh dmf/
+
+      - name: Test terminal output discipline
+        run: python3 tests/run_output_test.py build

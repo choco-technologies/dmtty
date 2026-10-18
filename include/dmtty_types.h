@@ -54,6 +54,9 @@ typedef enum
     dmtty_ioctl_cmd_claim_foreground,    /**< Make the calling handle the foreground reader of this node; arg unused (pass NULL) */
     dmtty_ioctl_cmd_is_foreground,       /**< Check foreground status; arg = bool* (true if the calling handle is currently foreground) */
 
+    dmtty_ioctl_cmd_get_onlcr,           /**< Get LF to CRLF output processing; arg = bool* */
+    dmtty_ioctl_cmd_set_onlcr,           /**< Set LF to CRLF output processing; arg = bool*; independent of input echo/canonical flags */
+
     dmtty_ioctl_cmd_max
 } dmtty_ioctl_cmd_t;
 

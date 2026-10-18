@@ -54,6 +54,9 @@ typedef struct
     dmdrvi_dev_num_t dev_num;                          /**< Device number this slot is exposed under */
     char            *backing_path;                      /**< Path forwarded to/from (NULL = unbound), owned by this slot */
     uint32_t         flags;                             /**< Current IO flags (dmtty_flags_t bitmask) */
+    bool             onlcr;                            /**< Enable LF to CRLF output processing independently of input flags */
+    bool             output_cr;                        /**< Last byte successfully sent was CR (also tracks a partially sent CRLF) */
+    dmosi_mutex_t     output_lock;                      /**< Serializes output and CRLF state across all handles of this node */
     int              open_count;                        /**< Number of handles currently open on this slot */
     void            *foreground_handle;                 /**< The dmtty_handle_t currently allowed to read from this slot, NULL if unclaimed (see DMTTY_FOREGROUND_POLL_MS) */
     bool             detached;                          /**< Force-detached while still open (see detach_internal()) - already removed from context->slots, freed by the last _close() instead of here */
@@ -106,6 +109,8 @@ static dmtty_slot_t *find_slot_by_dev_num(dmdrvi_context_t context, const dmdrvi
 static dmtty_slot_t *find_slot_by_name_locked(dmdrvi_context_t context, const char *name);
 static dmtty_slot_t *find_slot_by_backing_path_locked(dmdrvi_context_t context, const char *backing_path);
 static int compare_slot_ptr(const void *data1, const void *data2);
+static dmtty_slot_t *create_slot(void);
+static void free_slot(dmtty_slot_t *slot);
 static size_t handle_read(dmtty_handle_t *h, void *buffer, size_t size);
 static size_t handle_write(dmtty_handle_t *h, const void *buffer, size_t size);
 static int attach_internal(dmdrvi_context_t context, const char *backing_path, const char *name,
@@ -197,6 +202,30 @@ static int compare_slot_ptr(const void *data1, const void *data2)
     return (data1 == data2) ? 0 : 1;
 }
 
+/* Output state belongs to the node: stdout and input echo can use different
+ * open handles while still sharing the same physical byte stream. */
+static dmtty_slot_t *create_slot(void)
+{
+    dmtty_slot_t *slot = Dmod_Malloc(sizeof(*slot));
+    if (slot == NULL) return NULL;
+    memset(slot, 0, sizeof(*slot));
+    slot->onlcr = true;
+    slot->output_lock = dmosi_mutex_create(false);
+    if (slot->output_lock == NULL)
+    {
+        Dmod_Free(slot);
+        return NULL;
+    }
+    return slot;
+}
+
+static void free_slot(dmtty_slot_t *slot)
+{
+    Dmod_Free(slot->backing_path);
+    dmosi_mutex_destroy(slot->output_lock);
+    Dmod_Free(slot);
+}
+
 /**
  * @brief Read through a handle, falling back to raw kernel I/O when unbound
  *
@@ -220,13 +249,55 @@ static size_t handle_read(dmtty_handle_t *h, void *buffer, size_t size)
  * Counterpart of handle_read(): an unbound slot writes straight to the
  * kernel's raw stdout via Dmod_WriteKernel().
  */
-static size_t handle_write(dmtty_handle_t *h, const void *buffer, size_t size)
+static size_t backing_write(dmtty_handle_t *h, const void *buffer, size_t size)
 {
     if (h->backing_file != NULL)
     {
         return Dmod_FileWrite(buffer, 1, size, h->backing_file);
     }
     return Dmod_WriteKernel(buffer, size);
+}
+
+/**
+ * Apply output discipline once, for application writes and input echo alike.
+ * Return consumed input bytes, excluding inserted CRs. Remember a successful
+ * CR even if the following LF cannot be sent, so retrying a short write does
+ * not insert a second CR. Existing CRLF is preserved across calls/handles.
+ */
+static size_t handle_write(dmtty_handle_t *h, const void *buffer, size_t size)
+{
+    dmtty_slot_t *slot = h->slot;
+    const unsigned char *bytes = buffer;
+    size_t consumed = 0;
+    dmosi_mutex_lock(slot->output_lock);
+
+    /* Output processing is independent of echo/canonical input. Shell line
+     * editors disable both input flags while still writing terminal text. */
+    if (!slot->onlcr)
+    {
+        consumed = backing_write(h, buffer, size);
+        slot->output_cr = false;
+    }
+    else while (consumed < size)
+    {
+        if (bytes[consumed] == '\n' && !slot->output_cr)
+        {
+            if (backing_write(h, "\r", 1) != 1) break;
+            slot->output_cr = true;
+        }
+
+        /* Batch ordinary text, stopping before the next LF that may need CR. */
+        size_t end = consumed + 1;
+        while (end < size && bytes[end] != '\n') end++;
+        size_t requested = end - consumed;
+        size_t n = backing_write(h, bytes + consumed, requested);
+        if (n > 0) slot->output_cr = bytes[consumed + n - 1] == '\r';
+        consumed += n;
+        if (n < requested) break;
+    }
+
+    dmosi_mutex_unlock(slot->output_lock);
+    return consumed;
 }
 
 /**
@@ -266,13 +337,12 @@ static int attach_internal(dmdrvi_context_t context, const char *backing_path, c
         } while (find_slot_by_name_locked(context, name_buf) != NULL);
     }
 
-    dmtty_slot_t *slot = Dmod_Malloc(sizeof(dmtty_slot_t));
+    dmtty_slot_t *slot = create_slot();
     if (slot == NULL)
     {
         dmosi_mutex_unlock(context->lock);
         return -ENOMEM;
     }
-    memset(slot, 0, sizeof(*slot));
     slot->dev_num.flags = DMDRVI_NUM_ALT_NAME;
     Dmod_SnPrintf(slot->dev_num.alt_name, sizeof(slot->dev_num.alt_name), "%s", name_buf);
     slot->backing_path = Dmod_StrDup(backing_path);
@@ -280,8 +350,7 @@ static int attach_internal(dmdrvi_context_t context, const char *backing_path, c
 
     if (slot->backing_path == NULL || !dmlist_push_back(context->slots, slot))
     {
-        Dmod_Free(slot->backing_path);
-        Dmod_Free(slot);
+        free_slot(slot);
         dmosi_mutex_unlock(context->lock);
         return -ENOMEM;
     }
@@ -372,8 +441,7 @@ static int detach_internal(dmdrvi_context_t context, const char *name, bool forc
 
     if (free_now)
     {
-        Dmod_Free(slot->backing_path);
-        Dmod_Free(slot);
+        free_slot(slot);
     }
 
     DMOD_LOG_INFO("dmtty: detached '%s'\n", name);
@@ -515,7 +583,7 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmtty, dmdrvi_context_t, _create, ( dmini_c
         return NULL;
     }
 
-    dmtty_slot_t *main_slot = Dmod_Malloc(sizeof(dmtty_slot_t));
+    dmtty_slot_t *main_slot = create_slot();
     if (main_slot == NULL)
     {
         dmlist_destroy(context->slots);
@@ -523,7 +591,6 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmtty, dmdrvi_context_t, _create, ( dmini_c
         Dmod_Free(context);
         return NULL;
     }
-    memset(main_slot, 0, sizeof(*main_slot));
     main_slot->dev_num.flags = DMDRVI_NUM_ALT_NAME;
     Dmod_SnPrintf(main_slot->dev_num.alt_name, sizeof(main_slot->dev_num.alt_name), "tty");
 
@@ -539,7 +606,7 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmtty, dmdrvi_context_t, _create, ( dmini_c
         if (main_slot->backing_path == NULL)
         {
             DMOD_LOG_ERROR("dmtty: failed to allocate 'backing' path from configuration\n");
-            Dmod_Free(main_slot);
+            free_slot(main_slot);
             dmlist_destroy(context->slots);
             dmosi_mutex_destroy(context->lock);
             Dmod_Free(context);
@@ -549,12 +616,13 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmtty, dmdrvi_context_t, _create, ( dmini_c
 
     bool echo_enabled = string_to_bool((config != NULL) ? dmini_get_string(config, "dmtty", "echo", "on") : "on", true);
     bool canonical_enabled = string_to_bool((config != NULL) ? dmini_get_string(config, "dmtty", "canonical", "on") : "on", true);
+    main_slot->onlcr = string_to_bool((config != NULL) ? dmini_get_string(config, "dmtty", "onlcr", "on") : "on", true);
     main_slot->flags = (echo_enabled ? dmtty_flag_echo : 0) | (canonical_enabled ? dmtty_flag_canonical : 0);
 
     if (!dmlist_push_back(context->slots, main_slot))
     {
         DMOD_LOG_ERROR("dmtty: failed to register the main /dev/tty node\n");
-        Dmod_Free(main_slot);
+        free_slot(main_slot);
         dmlist_destroy(context->slots);
         dmosi_mutex_destroy(context->lock);
         Dmod_Free(context);
@@ -600,8 +668,7 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmtty, void, _free, ( dmdrvi_context_t cont
     for (size_t i = 0; i < count; i++)
     {
         dmtty_slot_t *slot = dmlist_get(context->slots, i);
-        Dmod_Free(slot->backing_path);
-        Dmod_Free(slot);
+        free_slot(slot);
     }
     dmlist_destroy(context->slots);
     dmosi_mutex_destroy(context->lock);
@@ -721,14 +788,13 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmtty, void, _close, ( dmdrvi_context_t con
     /* Already unpublished by a force-detach while this was the last open
      * handle on it (see detach_internal()'s `force` parameter) - finish the
      * free that was deferred until now. */
-    bool free_slot = h->slot->detached && h->slot->open_count == 0;
-    dmtty_slot_t *slot_to_free = free_slot ? h->slot : NULL;
+    bool release_slot = h->slot->detached && h->slot->open_count == 0;
+    dmtty_slot_t *slot_to_free = release_slot ? h->slot : NULL;
     dmosi_mutex_unlock(context->lock);
 
     if (slot_to_free != NULL)
     {
-        Dmod_Free(slot_to_free->backing_path);
-        Dmod_Free(slot_to_free);
+        free_slot(slot_to_free);
     }
 
     Dmod_Free(handle);
@@ -907,6 +973,21 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmtty, int, _ioctl, ( dmdrvi_context_t cont
 
     switch (command)
     {
+        case dmtty_ioctl_cmd_get_onlcr:
+            if (arg == NULL) return -EINVAL;
+            dmosi_mutex_lock(slot->output_lock);
+            *(bool *)arg = slot->onlcr;
+            dmosi_mutex_unlock(slot->output_lock);
+            return 0;
+
+        case dmtty_ioctl_cmd_set_onlcr:
+            if (arg == NULL) return -EINVAL;
+            dmosi_mutex_lock(slot->output_lock);
+            slot->onlcr = *(bool *)arg;
+            slot->output_cr = false;
+            dmosi_mutex_unlock(slot->output_lock);
+            return 0;
+
         case dmtty_ioctl_cmd_get_flags:
             if (arg == NULL) return -EINVAL;
             *(uint32_t *)arg = slot->flags;
@@ -964,6 +1045,9 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmtty, int, _ioctl, ( dmdrvi_context_t cont
             h->have_line = false;
             h->skip_next_lf = false;
 
+            dmosi_mutex_lock(slot->output_lock);
+            slot->output_cr = false;
+            dmosi_mutex_unlock(slot->output_lock);
             Dmod_Free(slot->backing_path);
             slot->backing_path = new_backing_path;
             return 0;
