@@ -72,6 +72,7 @@ jobs:
           cd build_$ARCH_DIR_NAME
 
           cmake .. -DDMOD_TOOLS_NAME=arch/${{ matrix.arch_name }} \
+                   -DDMOD_COMPRESSION_METHOD=deflate \
                    -DDMOD_MODULE_VERSION="${{ steps.get_version.outputs.version }}"
           cmake --build .
 
