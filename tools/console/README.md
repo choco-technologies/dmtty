@@ -67,10 +67,10 @@ Both halves of step 3-4 are load-bearing:
 
 `console` also releases its own `stdin`/`stdout`/`stderr`/`stdlog` before
 returning. A process that exits does not get them closed for it (`dmosi_process_kill()`
-never calls `dmosi_process_destroy()`), and a leaked `stdin` on a tty is not
-just untidy: `dmtty` gives the "foreground" reader role to the first handle
-opened on a node and releases it only on close, so a leaked handle leaves the
-shell's own reads spinning forever - writes work, input is dead.
+never calls `dmosi_process_destroy()`), so they would stay open for the lifetime
+of the system. (`dmtty` gives the "foreground" reader role to the first handle
+that reads a node and releases it only on close; `console` never reads its
+`stdin`, so it does not take the role from the shell.)
 
 `type=oneshot` and no `restart=` (defaults to `no`) are deliberate: with the
 handover in place a restart policy would react to the *shell* exiting, i.e.

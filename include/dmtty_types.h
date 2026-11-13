@@ -35,12 +35,17 @@ typedef enum
  *
  * dmtty_ioctl_cmd_claim_foreground / dmtty_ioctl_cmd_is_foreground relate to
  * the foreground-reader concept: each device node tracks exactly one "foreground"
- * open handle (the first one to open it, by default). Reads through any other,
+ * open handle (the first one to read it, by default). Reads through any other,
  * background, handle on the same node quietly block instead of racing the
  * foreground handle for incoming bytes - the dmtty equivalent of POSIX
  * SIGTTIN/job control, without an actual signal. Ownership is released when the
  * foreground handle is closed, at which point the node is unclaimed again and
  * the next handle to attempt a read (foreground or not) claims it.
+ *
+ * dmtty_ioctl_cmd_release_foreground gives the ownership up without closing the
+ * handle: a shell that waits for a child it started in the foreground releases the
+ * node (the child reads through a handle of its own and claims it with its first
+ * read) and claims it back when the child is done.
  */
 typedef enum
 {
@@ -56,6 +61,8 @@ typedef enum
 
     dmtty_ioctl_cmd_get_onlcr,           /**< Get LF to CRLF output processing; arg = bool* */
     dmtty_ioctl_cmd_set_onlcr,           /**< Set LF to CRLF output processing; arg = bool*; independent of input echo/canonical flags */
+
+    dmtty_ioctl_cmd_release_foreground,  /**< Stop being the foreground reader of this node (no-op for another handle): the next handle to read claims it; arg unused (pass NULL) */
 
     dmtty_ioctl_cmd_max
 } dmtty_ioctl_cmd_t;

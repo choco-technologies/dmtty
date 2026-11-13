@@ -746,17 +746,10 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmtty, void*, _open, ( dmdrvi_context_t con
     handle->slot = slot;
     handle->backing_file = backing_file;
 
-    /* First handle to open an unclaimed node becomes its foreground reader
-     * (see DMTTY_FOREGROUND_POLL_MS / dmtty_ioctl_cmd_claim_foreground). A
-     * node re-opened while already claimed - e.g. a backgrounded job that
-     * inherited the same path as its stdin - does not steal foreground. */
-    dmosi_mutex_lock(context->lock);
-    if (slot->foreground_handle == NULL)
-    {
-        slot->foreground_handle = handle;
-    }
-    dmosi_mutex_unlock(context->lock);
-
+    /* Opening a node does not make the handle its foreground reader: the first handle that reads an unclaimed node does (_read()). A
+     * process has a handle for each of its streams, opened one after another, and only the one bound to stdin ever reads - claiming on
+     * open would hand the node to whichever happened to be opened while it was unclaimed (stdout of a child whose stdin is re-bound,
+     * for one), and the reader would then wait for its turn forever. */
     (void)flags;
     return handle;
 }
@@ -1056,6 +1049,15 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmtty, int, _ioctl, ( dmdrvi_context_t cont
         case dmtty_ioctl_cmd_claim_foreground:
             dmosi_mutex_lock(context->lock);
             slot->foreground_handle = h;
+            dmosi_mutex_unlock(context->lock);
+            return 0;
+
+        case dmtty_ioctl_cmd_release_foreground:
+            dmosi_mutex_lock(context->lock);
+            if (slot->foreground_handle == h)
+            {
+                slot->foreground_handle = NULL;
+            }
             dmosi_mutex_unlock(context->lock);
             return 0;
 

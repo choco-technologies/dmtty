@@ -20,10 +20,9 @@
  * its threads, but never calls dmosi_process_destroy(), which is what would
  * close the handles. They would stay open for the lifetime of the system.
  *
- * That is not merely untidy for a tty: dmtty hands the "foreground" reader
- * role to the first handle opened on a node and only releases it when that
- * handle is closed, so a leaked stdin here means the shell's own reads spin
- * forever waiting for a turn that never comes - writes work, input is dead.
+ * (dmtty hands the "foreground" reader role to the first handle that reads a
+ * node and only releases it when that handle is closed; this process never
+ * reads its stdin, so it does not take the role from the shell.)
  *
  * Deliberately done last, after everything this process still wants to print:
  * once stdout is released, Dmod_Printf() falls back to the raw kernel log
